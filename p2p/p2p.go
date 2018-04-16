@@ -62,12 +62,6 @@ func MakePlayerHost(listenPort int, prefix string) (host.Host, error) {
 		return nil, err
 	}
 
-	// Create a multiaddress
-	addr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", listenPort))
-	if err != nil {
-		return nil, err
-	}
-
 	// Create a peerstore
 	ps := peerstore.NewPeerstore()
 
@@ -81,6 +75,12 @@ func MakePlayerHost(listenPort int, prefix string) (host.Host, error) {
 	err = ps.AddPrivKey(pid, priv)
 	if err != nil {
 		log.Printf("Could not enable encryption: %v\n", err)
+		return nil, err
+	}
+
+	// Create a multiaddress
+	addr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", listenPort))
+	if err != nil {
 		return nil, err
 	}
 
@@ -110,6 +110,7 @@ func MakePlayerHost(listenPort int, prefix string) (host.Host, error) {
 	return basicHost, nil
 }
 
+// Most of this code is taken from https://gist.github.com/whyrusleeping/169a28cffe1aedd4419d80aa62d361aa
 func RunDHT(ctx context.Context, h host.Host, asBootstrap bool) {
 	var dhtClient *dht.IpfsDHT
 
@@ -145,7 +146,6 @@ func RunDHT(ctx context.Context, h host.Host, asBootstrap bool) {
 
 	// Now, look for others who have announced
 	log.Println("Searching for other peers ...")
-	tctx, _ = context.WithTimeout(ctx, time.Second*10)
 	peers, err := dhtClient.FindProviders(tctx, c)
 	if err != nil {
 		panic(err)
