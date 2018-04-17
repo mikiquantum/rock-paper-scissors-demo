@@ -29,35 +29,36 @@ const (
 	HARDCODED_BOOTSTRAP_NODE = "/ip4/127.0.0.1/tcp/30000/ipfs/QmNYcCDjtCRdYaYPpNkTSiQTpLLxRapMe1P3EGsmA2wK7D"
 )
 
-func loadEncryptionKeyPair(prefix string) (publicKey ed25519.PublicKey, privateKey ed25519.PrivateKey) {
+func loadEncryptionKeyPair(prefix string) (pub crypto.PubKey, priv crypto.PrivKey) {
 	key, err := ioutil.ReadFile(fmt.Sprintf("%s/%s.pub", KEY_DIR, prefix))
 	if err != nil {
 		panic(err)
 	}
-	publicKey = ed25519.PublicKey(key)
+	publicKey := ed25519.PublicKey(key)
 
 	key, err = ioutil.ReadFile(fmt.Sprintf("%s/%s.key", KEY_DIR, prefix))
 	if err != nil {
 		panic(err)
 	}
-	privateKey = ed25519.PrivateKey(key)
+	privateKey := ed25519.PrivateKey(key)
+
+	keyBytes := append(privateKey, publicKey...)
+
+	priv, err = crypto.UnmarshalEd25519PrivateKey(keyBytes)
+	if err != nil {
+		panic(err)
+	}
+	pub = priv.GetPublic()
+
 	return
 }
 
 func MakePlayerHost(listenPort int, prefix string) (host.Host, error) {
 	// Get the signing key for the host.
 	publicKey, privateKey := loadEncryptionKeyPair(prefix)
-	var key []byte
-	key = append(key, privateKey...)
-	key = append(key, publicKey...)
 
-	priv, err := crypto.UnmarshalEd25519PrivateKey(key)
-	if err != nil {
-		return nil, err
-	}
-	pub := priv.GetPublic()
-
-	pid, err := peer.IDFromPublicKey(pub)
+	// libp2p uses multihash formats to build up the PeerID
+	pid, err := peer.IDFromPublicKey(publicKey)
 	if err != nil {
 		return nil, err
 	}
@@ -67,24 +68,28 @@ func MakePlayerHost(listenPort int, prefix string) (host.Host, error) {
 
 	// Add the keys to the peerstore
 	// for this peer ID.
-	err = ps.AddPubKey(pid, pub)
+	err = ps.AddPubKey(pid, publicKey)
 	if err != nil {
 		log.Printf("Could not enable encryption: %v\n", err)
 		return nil, err
 	}
-	err = ps.AddPrivKey(pid, priv)
+	err = ps.AddPrivKey(pid, privateKey)
 	if err != nil {
 		log.Printf("Could not enable encryption: %v\n", err)
 		return nil, err
 	}
 
-	// Create a multiaddress
+	// The node is now set up with encryption
+
+	// Create a multiaddress for ipv4 on top of tcp listening on all interfaces
 	addr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", listenPort))
 	if err != nil {
 		return nil, err
 	}
 
-	// Create swarm (implements libP2P Network)
+	// Create swarm (implements libP2P Network) identified by the PeerID
+	// Enables listening on a set of addresses (multi-address)
+	// Defines the transport settings
 	swrm, err := swarm.NewSwarm(
 		context.Background(),
 		[]multiaddr.Multiaddr{addr},
@@ -99,18 +104,13 @@ func MakePlayerHost(listenPort int, prefix string) (host.Host, error) {
 	netw := (*swarm.Network)(swrm)
 	basicHost := basichost.New(netw)
 
-	// Build host multiaddress
-	hostAddr, _ := multiaddr.NewMultiaddr(fmt.Sprintf("/ipfs/%s", basicHost.ID().Pretty()))
-
-	// Now we can build a full multiaddress to reach this host
-	// by encapsulating both addresses:
-	fullAddr := addr.Encapsulate(hostAddr)
-	log.Printf("I am %s\n", fullAddr)
-
 	return basicHost, nil
 }
 
 // Most of this code is taken from https://gist.github.com/whyrusleeping/169a28cffe1aedd4419d80aa62d361aa
+
+// RunDHT maintains the DHT. It can be run in two modes:
+// As a bootstrap node, it will provide response to discovery requests. As client only mode, the DHT is more lightweight
 func RunDHT(ctx context.Context, h host.Host, asBootstrap bool) {
 	var dhtClient *dht.IpfsDHT
 
@@ -134,6 +134,7 @@ func RunDHT(ctx context.Context, h host.Host, asBootstrap bool) {
 	}
 
 	// Using the sha256 of our "topic" as our rendezvous value
+	// Uses CID (https://github.com/ipld/cid). Naming standard for content used by IPFS
 	c, _ := cid.NewPrefixV1(cid.Raw, multihash.SHA2_256).Sum([]byte("rock-paper-scissors-dht"))
 
 	// First, announce ourselves as participating in this topic
@@ -145,6 +146,8 @@ func RunDHT(ctx context.Context, h host.Host, asBootstrap bool) {
 	}
 
 	// Now, look for others who have announced
+	// This queries the existing nodes, at the moment only the bootstrap one will respond to the request,
+	// returning list of known peers
 	log.Println("Searching for other peers ...")
 	peers, err := dhtClient.FindProviders(tctx, c)
 	if err != nil {
@@ -152,7 +155,8 @@ func RunDHT(ctx context.Context, h host.Host, asBootstrap bool) {
 	}
 	log.Printf("Found %d peers!\n", len(peers))
 
-	// Now connect to them, so they are added to the PeerStore
+	// Now connect to them, so they can added to the peerstore enabling connecting by PeerID
+	// so we do not need to know the network/transport/location information of the remote peer
 	for _, pe := range peers {
 		if pe.ID == h.ID() {
 			// No sense connecting to ourselves

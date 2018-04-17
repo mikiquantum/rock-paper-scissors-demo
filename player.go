@@ -7,14 +7,13 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/mikiquantum/rock-paper-scissors-demo/game"
 	"github.com/mikiquantum/rock-paper-scissors-demo/p2p"
+	"github.com/mikiquantum/rock-paper-scissors-demo/game"
 )
 
 func main() {
 	bootstrapOnly := false
 
-	// Do not do this, use something like cobra to handle cmd validation/parsing
 	args := os.Args[1:]
 	if len(args) < 2 {
 		panic(errors.New(fmt.Sprintf("Not enough Arguments [%d] \nUsage: %s port prefix", len(args), os.Args[0])))
@@ -29,18 +28,21 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	// p2p.MakePlayerHost creates the peer and starts listening to incoming connections on the specified port
 	bhost, err := p2p.MakePlayerHost(port, args[1])
 	if err != nil {
 		panic(err)
 	}
 
+	// RunDHT sets up the distributed hash table to track other available peers to allow lookup by peer id.
 	p2p.RunDHT(context.Background(), bhost, bootstrapOnly)
 
-	if !bootstrapOnly {
+	// The bootstrap node provides resolution for peer discovery requests without participating in the game.
+	if bootstrapOnly {
+		select {}
+	} else {
 		player := game.NewPlayer(bhost)
 		player.StartPlaying()
-	} else {
-		select {}
 	}
 
 }
