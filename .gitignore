@@ -1,0 +1,6 @@
+bin/
+pkg/
+.idea/
+vendor/*
+!vendor/vendor.json
+.env
