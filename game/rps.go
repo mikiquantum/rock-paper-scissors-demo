@@ -1,13 +1,15 @@
 package game
-
 import (
+	"math/big"
 	"bufio"
 	"log"
-	"math/rand"
+	"crypto/rand"
+	"crypto/sha256"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
-
+	"encoding/base64"
 	"github.com/libp2p/go-libp2p-host"
 	"github.com/libp2p/go-libp2p-net"
 	"github.com/libp2p/go-libp2p-peer"
@@ -43,14 +45,13 @@ func (result Result) String() string {
 
 const MAX_ROUNDS = 5
 
-var appChannel = make(chan Choice, 1)
+var appChannel = make(chan string, 1)
 
 type Player struct {
 	host host.Host
 }
 
 func (player Player) StartPlaying() {
-	rand.Seed(time.Now().Unix())
 	opponent := player.waitForOpponent()
 	player.startGame(opponent)
 }
@@ -66,8 +67,30 @@ func (player Player) startGame(opponent peer.ID) {
 	for roundCount < MAX_ROUNDS {
 		choice := generateChoice()
 		log.Printf("My Choice [%s]", choice)
-		p2p.SendInt(player.host, int(choice), opponent)
-		opponentChoice := <-appChannel // Blocking until response
+	
+		salt := generateSalt()
+		commitment := generateCommitment(salt, choice)
+		log.Printf("Generating commitment and sending it to opponent: %s\n", commitment)
+		p2p.SendString(player.host, commitment, opponent)
+
+		// Waiting to receive commitment from counterpart
+		opponentCommitment := <- appChannel
+		log.Printf("Got commitment from opponent: %s", opponentCommitment)
+
+		log.Printf("Revealing commitment: %s", fmt.Sprintf("%s,%d", salt, choice))
+		p2p.SendString(player.host, fmt.Sprintf("%s,%d", salt, choice), opponent)
+		opponentChoiceMessage := <- appChannel
+		log.Printf("Opponent revealed commitment: %s", opponentChoiceMessage)
+		s := strings.Split(opponentChoiceMessage, ",")
+		opponentSalt := s[0]
+		opponentChoiceInt, _ := strconv.Atoi(s[1])
+		opponentChoice := Choice(opponentChoiceInt)
+		
+		log.Printf("Checking commitment to match salt+choice: %s, %s, %s", opponentCommitment, opponentSalt, opponentChoice)
+		if !checkCommitment(opponentSalt, opponentChoice, opponentCommitment) {
+			log.Printf("\x1b[41mOpponent commitment verification failed. Aborting game!\x1b[0m") //ansicolor red
+			return
+		}
 		result := analyzeResult(choice, opponentChoice)
 		log.Printf("\x1b[4m[%s] - [%s]\x1b[0m", choice, opponentChoice)
 		log.Printf("Round [%d] -> You %s\n", roundCount, result)
@@ -95,10 +118,10 @@ func HandleResponse(s net.Stream) {
 	// Create a buffer stream for non blocking read and write.
 	rwBuffer := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
 
-	go readMove(rwBuffer)
+	go readMsg(rwBuffer)
 }
 
-func readMove(rw *bufio.ReadWriter) {
+func readMsg(rw *bufio.ReadWriter) {
 	for {
 		str, _ := rw.ReadString('\n')
 
@@ -106,11 +129,7 @@ func readMove(rw *bufio.ReadWriter) {
 			return
 		}
 		if str != "\n" {
-			resp, err := strconv.Atoi(str[:len(str)-1])
-			if err != nil {
-				log.Printf("Error: %v\n", err)
-			}
-			appChannel <- Choice(resp)
+			appChannel <- str[:len(str)-1]
 		}
 
 	}
@@ -146,5 +165,21 @@ func (player Player) waitForOpponent() (opponent peer.ID) {
 }
 
 func generateChoice() (choice Choice) {
-	return Choice(rand.Intn(3))
+	choiceInt, _ := rand.Int(rand.Reader, big.NewInt(3))
+	return Choice(int(choiceInt.Int64()))
+}
+
+func generateSalt() (salt string) {
+	saltBytes := make([]byte, 32)
+	rand.Read(saltBytes)
+	return base64.URLEncoding.EncodeToString(saltBytes)
+}
+
+func generateCommitment(salt string, choice Choice) string {
+	sum := sha256.Sum256(append([]byte(salt), []byte{byte(choice)}...))
+	return base64.URLEncoding.EncodeToString(sum[:])
+}
+
+func checkCommitment(salt string, choice Choice, commitment string) bool {
+	return generateCommitment(salt, choice) == commitment
 }

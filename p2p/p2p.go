@@ -191,3 +191,23 @@ func SendInt(host host.Host, move int, destination peer.ID) (err error) {
 	}
 	return
 }
+
+func SendString(host host.Host, str string, destination peer.ID) (err error) {
+	var s net.Stream
+
+	for {
+		s, err = host.NewStream(context.Background(), destination, GAME_STREAM_PID)
+		if err != nil {
+			log.Println(err)
+			time.Sleep(2 * time.Second)
+		} else {
+			break
+		}
+	}
+	wrappedMessage := fmt.Sprintf("%s\n", str)
+	_, err = s.Write([]byte(wrappedMessage))
+	if err != nil {
+		panic(err)
+	}
+	return
+}
