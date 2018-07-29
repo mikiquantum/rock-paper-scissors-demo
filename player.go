@@ -2,43 +2,54 @@ package main
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"os"
-	"strconv"
 
 	"github.com/mikiquantum/rock-paper-scissors-demo/p2p"
 	"github.com/mikiquantum/rock-paper-scissors-demo/game"
+	"flag"
+	"fmt"
+	"log"
 )
 
+func usage() {
+	fmt.Printf("Usage: %s -p port -prefix prefix [-bootstrap]\n", os.Args[0])
+}
+
 func main() {
-	bootstrapOnly := false
 
-	args := os.Args[1:]
-	if len(args) < 2 {
-		panic(errors.New(fmt.Sprintf("Not enough Arguments [%d] \nUsage: %s port prefix", len(args), os.Args[0])))
+	port := flag.Int("p", 0, "Listen Port")
+	prefix := flag.String("prefix", "", "Prefix of Node - key match in resources")
+	bootstrapOnly := flag.Bool("bootstrap", false, "As Bootstrap Node")
+	help := flag.Bool("help", false, "Show Help")
+
+	flag.Parse()
+
+	if *help {
+		usage()
+		os.Exit(0)
 	}
 
-	if len(args) == 3 && args[2] == "bootstrap" {
-		bootstrapOnly = true
+	if *port == 0 || *prefix == "" {
+		usage()
+		os.Exit(1)
 	}
 
-	// Set up a libp2p host.
-	port, err := strconv.Atoi(args[0])
-	if err != nil {
-		panic(err)
+	if *bootstrapOnly {
+		log.Printf("Forcing Bootstrap to run on port 30000\n")
+		*port = 30000
 	}
+
 	// p2p.MakePlayerHost creates the peer and starts listening to incoming connections on the specified port
-	bhost, err := p2p.MakePlayerHost(port, args[1])
+	bhost, err := p2p.MakePlayerHost(*port, *prefix)
 	if err != nil {
 		panic(err)
 	}
 
 	// RunDHT sets up the distributed hash table to track other available peers to allow lookup by peer id.
-	p2p.RunDHT(context.Background(), bhost, bootstrapOnly)
+	p2p.RunDHT(context.Background(), bhost, *bootstrapOnly)
 
 	// The bootstrap node provides resolution for peer discovery requests without participating in the game.
-	if bootstrapOnly {
+	if *bootstrapOnly {
 		select {}
 	} else {
 		player := game.NewPlayer(bhost)
