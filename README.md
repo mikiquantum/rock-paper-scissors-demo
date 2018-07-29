@@ -20,12 +20,12 @@ https://docs.google.com/presentation/d/1q6oE7xa1EyrlG5WimlvTnOKoCOHE3071L3QsvHzl
 
 *Run DHT Bootstrap Node*
 
-`./player 30000 dht bootstrap`
+`./player -p 30000 -prefix dht -bootstrap`
 
 *Run Player 1 Node*
 
-`./player 30001 enc_1`
+`./player -p 30001 -prefix enc_1`
 
 *Run Player 2 Node*
 
-`./player 30002 enc_2`
+`./player -p 30002 -prefix enc_2`
