@@ -1,4 +1,0 @@
-package: github.com/mikiquantum/rock-paper-scissors-demo
-import:
-- package: github.com/libp2p/go-libp2p
-- package: github.com/libp2p/go-libp2p-kad-dht
